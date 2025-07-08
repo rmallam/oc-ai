@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        .chat-container {
+            margin: 20px 0;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        #prompt {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        #prompt:focus {
+            border-color: #007acc;
+            outline: none;
+        }
+        #sendBtn {
+            padding: 12px 24px;
+            background: #007acc;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #sendBtn:hover {
+            background: #005999;
+        }
+        #sendBtn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .response-area {
+            min-height: 200px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fafafa;
+            white-space: pre-wrap;
+            font-family: inherit;
+        }
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+        .error {
+            color: #d32f2f;
+            background: #ffebee;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #d32f2f;
+        }
+        .examples {
+            margin-top: 30px;
+        }
+        .examples h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .example-button {
+            display: inline-block;
+            margin: 5px;
+            padding: 8px 15px;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        .example-button:hover {
+            background: #e0e0e0;
+        }
+        .api-info {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border-left: 4px solid #007acc;
+        }
+        .api-info h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .api-info code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 OpenShift MCP</h1>
+            <p>AI-powered OpenShift SRE Assistant</p>
+        </div>
+
+        <div class="chat-container">
+            <div class="input-group">
+                <input type="text" id="prompt" placeholder="Ask me about your OpenShift cluster... (e.g., 'Why is pod nginx-123 crashlooping?')" />
+                <button id="sendBtn">Send</button>
+            </div>
+            
+            <div id="response" class="response-area">
+                Welcome! I'm your OpenShift SRE assistant. Ask me about:
+                • Pod troubleshooting and diagnostics
+                • Resource management and scaling
+                • Service connectivity issues
+                • Deployment problems
+                • General OpenShift operations
+
+                Type your question above or click an example below to get started.
+            </div>
+        </div>
+
+        <div class="examples">
+            <h3>💡 Example Queries</h3>
+            <div class="example-button" onclick="setPrompt('Why is pod nginx-deployment-abc123 in crashloop?')">
+                Diagnose crashloop
+            </div>
+            <div class="example-button" onclick="setPrompt('List all pods in the production namespace')">
+                List pods
+            </div>
+            <div class="example-button" onclick="setPrompt('Scale deployment webapp to 5 replicas')">
+                Scale deployment
+            </div>
+            <div class="example-button" onclick="setPrompt('Check service connectivity for my-service')">
+                Check connectivity
+            </div>
+            <div class="example-button" onclick="setPrompt('Troubleshoot ImagePullBackOff error')">
+                Image pull issues
+            </div>
+            <div class="example-button" onclick="setPrompt('Show cluster node status')">
+                Node status
+            </div>
+        </div>
+
+        <div class="api-info">
+            <h3>🔗 API Endpoints</h3>
+            <p><strong>Chat:</strong> <code>POST /api/v1/chat</code></p>
+            <p><strong>User Choice:</strong> <code>POST /api/v1/user-choice</code></p>
+            <p><strong>Health Check:</strong> <code>GET /health</code></p>
+        </div>
+    </div>
+
+    <script>
+        const promptInput = document.getElementById('prompt');
+        const sendBtn = document.getElementById('sendBtn');
+        const responseDiv = document.getElementById('response');
+
+        function setPrompt(text) {
+            promptInput.value = text;
+            promptInput.focus();
+        }
+
+        function sendMessage() {
+            const prompt = promptInput.value.trim();
+            if (!prompt) return;
+
+            sendBtn.disabled = true;
+            responseDiv.textContent = '🤔 Analyzing your request...';
+            responseDiv.className = 'response-area loading';
+
+            fetch('/api/v1/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ prompt: prompt })
+            })
+            .then(response => response.json())
+            .then(data => {
+                responseDiv.textContent = data.response || 'No response received';
+                responseDiv.className = 'response-area';
+                
+                if (data.analysis) {
+                    const analysisInfo = `\n\n📊 Analysis Details:\n• Confidence: ${Math.round(data.analysis.confidence * 100)}%\n• Severity: ${data.analysis.severity}`;
+                    responseDiv.textContent += analysisInfo;
+                }
+            })
+            .catch(error => {
+                responseDiv.textContent = `❌ Error: ${error.message}`;
+                responseDiv.className = 'response-area error';
+            })
+            .finally(() => {
+                sendBtn.disabled = false;
+                promptInput.focus();
+            });
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        promptInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Focus input on load
+        promptInput.focus();
+    </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# OpenShift MCP Go Configuration
+# Place this file at ~/.config/openshift-mcp/config.yaml
+
+# Server Configuration
+host: "0.0.0.0"           # Server bind address
+port: "8080"              # Server port
+debug: false              # Enable debug logging
+
+# LLM Configuration
+llm-provider: "gemini"    # LLM provider: gemini, openai, etc.
+model: "gemini-2.5-pro-preview-06-05"  # Model name
+# gemini-api-key: "your_api_key_here"   # Gemini API key (prefer env var)
+
+# Kubernetes Configuration
+# kubeconfig: "~/.kube/config"          # Path to kubeconfig (auto-detected)
+
+# Decision Engine Configuration
+confidence-threshold: 0.7  # Minimum confidence for recommendations (0.0-1.0)
+evidence-limit: 10         # Maximum pieces of evidence to collect
+
+# Database Configuration
+# database-path: "~/.config/openshift-mcp/memory.db"  # Database file path (auto-set)
+
+# Plugin Configuration
+# plugins-dir: "~/.config/openshift-mcp/plugins"      # Custom plugins directory
+
+# Example: Override via environment variables
+# export OPENSHIFT_MCP_DEBUG=true
+# export OPENSHIFT_MCP_PORT=9090
+# export GEMINI_API_KEY=your_actual_api_key
