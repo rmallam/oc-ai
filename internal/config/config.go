@@ -89,6 +89,10 @@ func Load(cmd *cobra.Command) (*Config, error) {
 		cfg.GeminiAPIKey = apiKey
 	}
 
+	if model := os.Getenv("GEMINI_MODEL"); model != "" {
+		cfg.Model = model
+	}
+
 	// Set default kubeconfig if not specified
 	if cfg.Kubeconfig == "" {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -110,7 +114,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", "8080")
 	v.SetDefault("debug", false)
-	v.SetDefault("model", "gemini-2.5-pro-preview-06-05")
+	v.SetDefault("model", "gemini-2.0-flash-001")
 	v.SetDefault("llm-provider", "gemini")
 	v.SetDefault("confidence-threshold", 0.7)
 	v.SetDefault("evidence-limit", 10)

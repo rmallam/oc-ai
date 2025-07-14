@@ -10,6 +10,7 @@ import (
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/decision"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/llm"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/memory"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/types"
 	"github.com/sirupsen/logrus"
 )
 
@@ -30,7 +31,7 @@ type ChatRequest struct {
 // ChatResponse represents a chat API response
 type ChatResponse struct {
 	Response  string                 `json:"response"`
-	Analysis  *decision.Analysis     `json:"analysis,omitempty"`
+	Analysis  *types.Analysis        `json:"analysis,omitempty"`
 	Timestamp time.Time              `json:"timestamp"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
@@ -97,6 +98,9 @@ func (s *Server) setupRoutes() {
 	{
 		api.POST("/chat", s.handleChat)
 		api.POST("/user-choice", s.handleUserChoice)
+		api.GET("/prompts/stats", s.handlePromptStats)
+		api.POST("/prompts/update", s.handleUpdatePrompts)
+		api.GET("/prompts/categories", s.handlePromptCategories)
 	}
 
 	// Static routes for web UI (if needed)
@@ -211,5 +215,80 @@ func (s *Server) handleUserChoice(c *gin.Context) {
 		Metadata: map[string]interface{}{
 			"choice": req.Choice,
 		},
+	})
+}
+
+// handlePromptStats handles prompt statistics requests
+func (s *Server) handlePromptStats(c *gin.Context) {
+	categories, err := s.memory.GetPromptCategories()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get prompt categories")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get prompt statistics"})
+		return
+	}
+
+	// Calculate statistics
+	stats := make(map[string]interface{})
+	categoryStats := make(map[string]int)
+	subcategoryStats := make(map[string]map[string]int)
+	totalPrompts := 0
+	successfulPrompts := 0
+
+	for _, category := range categories {
+		totalPrompts += category.Frequency
+		categoryStats[category.Category] += category.Frequency
+
+		if category.Success {
+			successfulPrompts += category.Frequency
+		}
+
+		if subcategoryStats[category.Category] == nil {
+			subcategoryStats[category.Category] = make(map[string]int)
+		}
+		subcategoryStats[category.Category][category.Subcategory] += category.Frequency
+	}
+
+	stats["total_prompts"] = totalPrompts
+	stats["unique_prompts"] = len(categories)
+	stats["success_rate"] = float64(successfulPrompts) / float64(totalPrompts) * 100
+	stats["by_category"] = categoryStats
+	stats["by_subcategory"] = subcategoryStats
+
+	c.JSON(http.StatusOK, gin.H{
+		"stats":     stats,
+		"timestamp": time.Now(),
+	})
+}
+
+// handleUpdatePrompts handles manual prompts.md update requests
+func (s *Server) handleUpdatePrompts(c *gin.Context) {
+	err := s.memory.UpdatePromptsFile()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to update prompts file")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update prompts file"})
+		return
+	}
+
+	categories, _ := s.memory.GetPromptCategories()
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Prompts file updated successfully",
+		"prompts_count": len(categories),
+		"timestamp":     time.Now(),
+	})
+}
+
+// handlePromptCategories handles prompt categories listing
+func (s *Server) handlePromptCategories(c *gin.Context) {
+	categories, err := s.memory.GetPromptCategories()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get prompt categories")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get prompt categories"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"categories": categories,
+		"count":      len(categories),
+		"timestamp":  time.Now(),
 	})
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/decision"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/types"
 )
 
 // Plugin represents a diagnostic plugin interface
@@ -12,7 +12,7 @@ type Plugin interface {
 	Name() string
 	Description() string
 	CanHandle(prompt string) bool
-	Handle(prompt string, context map[string]interface{}) (*decision.Analysis, error)
+	Handle(prompt string, context map[string]interface{}) (*types.Analysis, error)
 }
 
 // Manager manages plugins
@@ -65,20 +65,20 @@ func (p *CrashLoopPlugin) CanHandle(prompt string) bool {
 		strings.Contains(lowerPrompt, "crashing")
 }
 
-func (p *CrashLoopPlugin) Handle(prompt string, context map[string]interface{}) (*decision.Analysis, error) {
+func (p *CrashLoopPlugin) Handle(prompt string, context map[string]interface{}) (*types.Analysis, error) {
 	// Specialized crashloop analysis
-	analysis := &decision.Analysis{
+	analysis := &types.Analysis{
 		Query:      prompt,
 		Confidence: 0.85,
 		Severity:   "High",
-		RootCauses: []decision.RootCause{
+		RootCauses: []types.RootCause{
 			{
 				Description: "Application container failing to start",
 				Confidence:  0.9,
 				Evidence:    "Pod is in CrashLoopBackOff state",
 			},
 		},
-		Actions: []decision.RecommendedAction{
+		Actions: []types.RecommendedAction{
 			{
 				Description: "Check container logs for startup errors",
 				Priority:    "High",
@@ -94,15 +94,15 @@ func (p *CrashLoopPlugin) Handle(prompt string, context map[string]interface{}) 
 		},
 	}
 
-	analysis.Response = fmt.Sprintf("🔍 **CrashLoop Diagnostic Analysis**\n\n" +
-		"Detected pod crashloop issue. This typically indicates:\n" +
-		"1. Application startup failures\n" +
-		"2. Missing dependencies or configuration\n" +
-		"3. Resource constraints\n\n" +
-		"**Immediate Actions:**\n" +
-		"• Check recent logs: `oc logs <pod-name> --previous`\n" +
-		"• Review pod events: `oc describe pod <pod-name>`\n" +
-		"• Verify resource limits and requests\n\n" +
+	analysis.Response = fmt.Sprintf("🔍 **CrashLoop Diagnostic Analysis**\n\n"+
+		"Detected pod crashloop issue. This typically indicates:\n"+
+		"1. Application startup failures\n"+
+		"2. Missing dependencies or configuration\n"+
+		"3. Resource constraints\n\n"+
+		"**Immediate Actions:**\n"+
+		"• Check recent logs: `oc logs <pod-name> --previous`\n"+
+		"• Review pod events: `oc describe pod <pod-name>`\n"+
+		"• Verify resource limits and requests\n\n"+
 		"Confidence: %.0f%% | Severity: %s",
 		analysis.Confidence*100, analysis.Severity)
 
@@ -128,19 +128,19 @@ func (p *NetworkPlugin) CanHandle(prompt string) bool {
 		strings.Contains(lowerPrompt, "dns")
 }
 
-func (p *NetworkPlugin) Handle(prompt string, context map[string]interface{}) (*decision.Analysis, error) {
-	analysis := &decision.Analysis{
+func (p *NetworkPlugin) Handle(prompt string, context map[string]interface{}) (*types.Analysis, error) {
+	analysis := &types.Analysis{
 		Query:      prompt,
 		Confidence: 0.75,
 		Severity:   "Medium",
-		RootCauses: []decision.RootCause{
+		RootCauses: []types.RootCause{
 			{
 				Description: "Network connectivity issue",
 				Confidence:  0.8,
 				Evidence:    "Service or DNS resolution problems detected",
 			},
 		},
-		Actions: []decision.RecommendedAction{
+		Actions: []types.RecommendedAction{
 			{
 				Description: "Test service connectivity",
 				Priority:    "High",
@@ -156,15 +156,15 @@ func (p *NetworkPlugin) Handle(prompt string, context map[string]interface{}) (*
 		},
 	}
 
-	analysis.Response = fmt.Sprintf("🌐 **Network Diagnostic Analysis**\n\n" +
-		"Detected network-related issue. Common causes:\n" +
-		"1. Service configuration problems\n" +
-		"2. DNS resolution issues\n" +
-		"3. Network policy restrictions\n\n" +
-		"**Troubleshooting Steps:**\n" +
-		"• Verify services and endpoints\n" +
-		"• Test DNS resolution\n" +
-		"• Check network policies\n\n" +
+	analysis.Response = fmt.Sprintf("🌐 **Network Diagnostic Analysis**\n\n"+
+		"Detected network-related issue. Common causes:\n"+
+		"1. Service configuration problems\n"+
+		"2. DNS resolution issues\n"+
+		"3. Network policy restrictions\n\n"+
+		"**Troubleshooting Steps:**\n"+
+		"• Verify services and endpoints\n"+
+		"• Test DNS resolution\n"+
+		"• Check network policies\n\n"+
 		"Confidence: %.0f%% | Severity: %s",
 		analysis.Confidence*100, analysis.Severity)
 

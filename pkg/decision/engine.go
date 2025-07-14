@@ -2,360 +2,349 @@ package decision
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/rakeshkumarmallam/openshift-mcp-go/internal/config"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/command"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/llm"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/memory"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/network"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/operator"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/types"
 	"github.com/sirupsen/logrus"
 )
 
-// Engine represents the dynamic decision making engine
+// Engine represents the dynamic decision making engine with specialized sub-engines
 type Engine struct {
-	config    *config.Config
-	memory    *memory.Store
-	llmClient llm.Client
+	config         *config.Config
+	memory         *memory.Store
+	llmClient      llm.Client
+	sreAssistant   *llm.SREAssistant
+	operatorEngine *operator.DetectionEngine
+	commandEngine  *command.GenerationEngine
+	networkEngine  *network.TroubleshootingEngine
 }
 
-// Analysis represents the result of analysis
-type Analysis struct {
-	Query       string                 `json:"query"`
-	Response    string                 `json:"response"`
-	Confidence  float64                `json:"confidence"`
-	Severity    string                 `json:"severity"`
-	RootCauses  []RootCause            `json:"root_causes"`
-	Actions     []RecommendedAction    `json:"recommended_actions"`
-	Evidence    []Evidence             `json:"evidence"`
-	Timestamp   time.Time              `json:"timestamp"`
-	AnalysisID  string                 `json:"analysis_id"`
-	Metadata    map[string]interface{} `json:"metadata"`
-}
-
-// RootCause represents an identified root cause
-type RootCause struct {
-	Description string  `json:"description"`
-	Confidence  float64 `json:"confidence"`
-	Evidence    string  `json:"evidence"`
-}
-
-// RecommendedAction represents a recommended action
-type RecommendedAction struct {
-	Description string `json:"description"`
-	Priority    string `json:"priority"` // High, Medium, Low
-	Command     string `json:"command,omitempty"`
-	Risk        string `json:"risk,omitempty"`
-}
-
-// Evidence represents evidence collected during analysis
-type Evidence struct {
-	Type        string `json:"type"`        // logs, events, status, etc.
-	Source      string `json:"source"`      // pod name, node name, etc.
-	Content     string `json:"content"`     // actual evidence content
-	Timestamp   time.Time `json:"timestamp"`
-}
-
-// NewEngine creates a new decision engine
+// NewEngine creates a new decision engine with specialized sub-engines
 func NewEngine(cfg *config.Config, mem *memory.Store, llmClient llm.Client) (*Engine, error) {
 	return &Engine{
-		config:    cfg,
-		memory:    mem,
-		llmClient: llmClient,
+		config:         cfg,
+		memory:         mem,
+		llmClient:      llmClient,
+		sreAssistant:   llm.NewSREAssistant(llmClient),
+		operatorEngine: operator.NewDetectionEngine(),
+		commandEngine:  command.NewGenerationEngine(llmClient),
+		networkEngine:  network.NewTroubleshootingEngine(),
 	}, nil
 }
 
-// Analyze analyzes a user prompt and returns analysis
-func (e *Engine) Analyze(prompt string) (*Analysis, error) {
-	logrus.WithField("prompt", prompt).Debug("Starting analysis")
+// Analyze analyzes a user prompt and returns analysis using specialized engines
+func (e *Engine) Analyze(prompt string) (*types.Analysis, error) {
+	logrus.WithField("prompt", prompt).Debug("Starting analysis with specialized engines")
 
-	analysis := &Analysis{
+	analysis := &types.Analysis{
 		Query:      prompt,
 		Timestamp:  time.Now(),
 		AnalysisID: generateAnalysisID(),
 		Metadata:   make(map[string]interface{}),
 	}
 
-	// Check if this is a diagnostic query
-	if e.isDiagnosticQuery(prompt) {
-		return e.performDiagnosticAnalysis(analysis)
-	}
-
-	// Handle regular queries
-	return e.performRegularAnalysis(analysis)
-}
-
-// isDiagnosticQuery checks if the prompt contains diagnostic keywords
-func (e *Engine) isDiagnosticQuery(prompt string) bool {
-	diagnosticKeywords := []string{
-		"crashloop", "crash", "failing", "not working", "broken", "error",
-		"troubleshoot", "debug", "diagnose", "fix", "solve", "why",
-		"problem", "issue", "status", "check", "logs",
-	}
-
-	lowerPrompt := strings.ToLower(prompt)
-	for _, keyword := range diagnosticKeywords {
-		if strings.Contains(lowerPrompt, keyword) {
-			return true
+	// Store the prompt in memory
+	if e.memory != nil {
+		if err := e.memory.StoreQuery(prompt); err != nil {
+			logrus.WithError(err).Warn("Failed to store prompt in memory")
 		}
 	}
-	return false
+
+	// Check for operator queries first (highest priority)
+	if ok, operatorName := e.operatorEngine.IsOperatorQuery(prompt); ok {
+		return e.handleOperatorQuery(analysis, operatorName)
+	}
+
+	// Check for network troubleshooting queries (second priority)
+	if e.networkEngine.IsNetworkQuery(prompt) {
+		return e.handleNetworkTroubleshooting(analysis)
+	}
+
+	// Use SRE Assistant for intelligent classification (third priority)
+	return e.handleSREClassification(analysis)
 }
 
-// performDiagnosticAnalysis performs diagnostic analysis
-func (e *Engine) performDiagnosticAnalysis(analysis *Analysis) (*Analysis, error) {
-	logrus.Debug("Performing diagnostic analysis")
+// handleOperatorQuery handles operator detection queries
+func (e *Engine) handleOperatorQuery(analysis *types.Analysis, operatorName string) (*types.Analysis, error) {
+	logrus.Debugf("Handling operator query for: %s", operatorName)
 
-	// Extract resource information from prompt
-	resourceInfo := e.extractResourceInfo(analysis.Query)
-	analysis.Metadata["resource_info"] = resourceInfo
+	// Use the dedicated operator detection engine
+	detectionResult := e.operatorEngine.DetectOperator(operatorName)
 
-	// Collect evidence
-	evidence, err := e.collectEvidence(resourceInfo)
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to collect some evidence")
-	}
-	analysis.Evidence = evidence
-
-	// Analyze root causes
-	rootCauses := e.analyzeRootCauses(evidence)
-	analysis.RootCauses = rootCauses
-
-	// Generate recommendations
-	actions := e.generateRecommendations(rootCauses, evidence)
-	analysis.Actions = actions
-
-	// Calculate confidence and severity
-	analysis.Confidence = e.calculateConfidence(rootCauses, evidence)
-	analysis.Severity = e.calculateSeverity(rootCauses, evidence)
-
-	// Generate response
-	analysis.Response = e.formatDiagnosticResponse(analysis)
+	// Convert detection result to analysis format
+	analysis.Response = e.formatOperatorResponse(detectionResult)
+	analysis.Confidence = 0.95
+	analysis.Severity = "Low"
+	analysis.Metadata["operator_check"] = operatorName
+	analysis.Metadata["execution_type"] = "operator_detection"
+	analysis.Metadata["is_installed"] = detectionResult.IsInstalled
+	analysis.Metadata["detection_details"] = detectionResult.Details
+	analysis.Metadata["commands_executed"] = len(detectionResult.Commands)
 
 	return analysis, nil
 }
 
-// performRegularAnalysis performs regular non-diagnostic analysis
-func (e *Engine) performRegularAnalysis(analysis *Analysis) (*Analysis, error) {
-	logrus.Debug("Performing regular analysis")
+// handleCommandExecution handles general command execution with support for multiple commands
+func (e *Engine) handleCommandExecution(analysis *types.Analysis) (*types.Analysis, error) {
+	logrus.Debug("Handling general command execution")
 
-	// Use LLM for regular queries
-	response, err := e.llmClient.GenerateResponse(analysis.Query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate LLM response: %w", err)
+	// Use the dedicated command generation engine
+	generationResult := e.commandEngine.GenerateAndExecute(analysis.Query)
+
+	// Convert generation result to analysis format
+	analysis.Response = e.formatCommandResponse(generationResult)
+	analysis.Metadata["execution_type"] = "command_execution"
+
+	// Handle multiple commands
+	if len(generationResult.GeneratedCommands) > 1 {
+		analysis.Metadata["commands"] = generationResult.GeneratedCommands
+		analysis.Metadata["command_count"] = len(generationResult.GeneratedCommands)
+
+		// Calculate overall success metrics
+		successCount := 0
+		totalDuration := 0.0
+		for _, result := range generationResult.ExecutionResults {
+			if result.ExitCode == 0 {
+				successCount++
+			}
+			totalDuration += result.Duration.Seconds()
+		}
+
+		analysis.Metadata["successful_commands"] = successCount
+		analysis.Metadata["total_duration"] = totalDuration
+
+		if successCount == len(generationResult.GeneratedCommands) {
+			analysis.Confidence = 0.9
+			analysis.Severity = "Low"
+		} else if successCount > 0 {
+			analysis.Confidence = 0.6
+			analysis.Severity = "Medium"
+		} else {
+			analysis.Confidence = 0.3
+			analysis.Severity = "High"
+		}
+	} else {
+		// Single command (backward compatibility)
+		analysis.Metadata["command"] = generationResult.GeneratedCommand
+		analysis.Metadata["exit_code"] = generationResult.ExecutionResult.ExitCode
+		analysis.Metadata["duration"] = generationResult.ExecutionResult.Duration.Seconds()
+
+		if generationResult.ExecutionResult.ExitCode == 0 {
+			analysis.Confidence = 0.9
+			analysis.Severity = "Low"
+		} else {
+			analysis.Confidence = 0.3
+			analysis.Severity = "Medium"
+			if generationResult.Fallback != nil {
+				analysis.Confidence = 0.7
+				analysis.Metadata["fallback_used"] = true
+				analysis.Metadata["fallback_command"] = generationResult.Fallback.Command
+			}
+		}
 	}
 
+	return analysis, nil
+}
+
+// handleNetworkTroubleshooting handles network troubleshooting queries
+func (e *Engine) handleNetworkTroubleshooting(analysis *types.Analysis) (*types.Analysis, error) {
+	logrus.Debug("Handling network troubleshooting query")
+
+	// Use the dedicated network troubleshooting engine
+	troubleshootingResult := e.networkEngine.TroubleshootNetwork(analysis.Query)
+
+	// Convert troubleshooting result to analysis format
+	analysis.Response = e.formatNetworkResponse(troubleshootingResult)
+	analysis.Metadata["workflow_type"] = troubleshootingResult.WorkflowType
+	analysis.Metadata["execution_type"] = "network_troubleshooting"
+	analysis.Metadata["pod_info"] = troubleshootingResult.PodInfo
+	analysis.Metadata["steps_executed"] = len(troubleshootingResult.Steps)
+	analysis.Metadata["commands_executed"] = len(troubleshootingResult.Commands)
+
+	if troubleshootingResult.Success {
+		analysis.Confidence = 0.9
+		analysis.Severity = "Low"
+	} else {
+		analysis.Confidence = 0.5
+		analysis.Severity = "Medium"
+	}
+
+	return analysis, nil
+}
+
+// handleSREClassification uses the SRE Assistant to intelligently classify and handle requests
+func (e *Engine) handleSREClassification(analysis *types.Analysis) (*types.Analysis, error) {
+	logrus.Debug("Handling request through SRE classification")
+
+	// First, classify the request type using SRE Assistant
+	requestType := e.sreAssistant.ClassifyRequest(analysis.Query)
+	logrus.Debugf("SRE classification result: %s", requestType)
+
+	analysis.Metadata["sre_classification"] = requestType
+
+	// For requests that need command execution, route to command engine
+	if requestType == "resource-creation" || requestType == "configuration" {
+		logrus.Debug("Routing classified request to command execution")
+		return e.handleCommandExecution(analysis)
+	}
+
+	// For other types (troubleshooting, security, incident, performance), provide analysis response
+	response, err := e.sreAssistant.AnalyzeIssue(analysis.Query)
+	if err != nil {
+		// Fallback to general command execution if SRE analysis fails
+		logrus.WithError(err).Warn("SRE analysis failed, falling back to command execution")
+		return e.handleCommandExecution(analysis)
+	}
+
+	// Set response and metadata
 	analysis.Response = response
-	analysis.Confidence = 0.8 // Default confidence for regular queries
+	analysis.Metadata["execution_type"] = "sre_analysis"
+	analysis.Confidence = 0.8
 	analysis.Severity = "Low"
 
 	return analysis, nil
 }
 
-// extractResourceInfo extracts resource information from prompt
-func (e *Engine) extractResourceInfo(prompt string) map[string]string {
-	info := make(map[string]string)
+// formatOperatorResponse formats the operator detection result for display
+func (e *Engine) formatOperatorResponse(result *operator.DetectionResult) string {
+	var lines []string
 
-	// Extract pod name
-	podRegex := regexp.MustCompile(`pod\s+([a-zA-Z0-9\-]+)`)
-	if matches := podRegex.FindStringSubmatch(prompt); len(matches) > 1 {
-		info["pod_name"] = matches[1]
-	}
+	// Add main summary
+	lines = append(lines, result.Summary)
+	lines = append(lines, "")
 
-	// Extract namespace
-	nsRegex := regexp.MustCompile(`namespace\s+([a-zA-Z0-9\-]+)`)
-	if matches := nsRegex.FindStringSubmatch(prompt); len(matches) > 1 {
-		info["namespace"] = matches[1]
-	}
+	// Add detailed check results
+	lines = append(lines, "🔍 Detailed Check Results:")
+	lines = append(lines, strings.Repeat("=", 50))
 
-	// Extract deployment name
-	deployRegex := regexp.MustCompile(`deployment\s+([a-zA-Z0-9\-]+)`)
-	if matches := deployRegex.FindStringSubmatch(prompt); len(matches) > 1 {
-		info["deployment"] = matches[1]
-	}
-
-	return info
-}
-
-// collectEvidence collects evidence for analysis
-func (e *Engine) collectEvidence(resourceInfo map[string]string) ([]Evidence, error) {
-	var evidence []Evidence
-
-	// This would normally collect actual evidence from Kubernetes
-	// For now, we'll simulate evidence collection
-	if podName, exists := resourceInfo["pod_name"]; exists {
-		evidence = append(evidence, Evidence{
-			Type:      "pod_status",
-			Source:    podName,
-			Content:   "Pod is in CrashLoopBackOff state",
-			Timestamp: time.Now(),
-		})
-
-		evidence = append(evidence, Evidence{
-			Type:      "logs",
-			Source:    podName,
-			Content:   "Error: No module named 'uvicorn'",
-			Timestamp: time.Now(),
-		})
-
-		evidence = append(evidence, Evidence{
-			Type:      "events",
-			Source:    podName,
-			Content:   "Container image 'my-app:latest' is present on machine",
-			Timestamp: time.Now(),
-		})
-	}
-
-	return evidence, nil
-}
-
-// analyzeRootCauses analyzes evidence to identify root causes
-func (e *Engine) analyzeRootCauses(evidence []Evidence) []RootCause {
-	var rootCauses []RootCause
-
-	// Analyze evidence patterns
-	for _, ev := range evidence {
-		if strings.Contains(ev.Content, "No module named") {
-			rootCauses = append(rootCauses, RootCause{
-				Description: "Missing Python module dependency",
-				Confidence:  0.9,
-				Evidence:    ev.Content,
-			})
+	for i, check := range result.Details {
+		status := "❌ FAILED"
+		if check.Found {
+			status = "✅ PASSED"
 		}
 
-		if strings.Contains(ev.Content, "CrashLoopBackOff") {
-			rootCauses = append(rootCauses, RootCause{
-				Description: "Application failing to start properly",
-				Confidence:  0.8,
-				Evidence:    ev.Content,
-			})
-		}
-	}
+		lines = append(lines, fmt.Sprintf("%d. %s - %s", i+1, status, check.Description))
+		lines = append(lines, fmt.Sprintf("   📋 %s", check.Details))
 
-	return rootCauses
-}
-
-// generateRecommendations generates recommended actions
-func (e *Engine) generateRecommendations(rootCauses []RootCause, evidence []Evidence) []RecommendedAction {
-	var actions []RecommendedAction
-
-	for _, cause := range rootCauses {
-		if strings.Contains(cause.Description, "Missing Python module") {
-			actions = append(actions, RecommendedAction{
-				Description: "Install missing Python dependencies",
-				Priority:    "High",
-				Command:     "pip install <missing_module>",
-				Risk:        "Low",
-			})
-		}
-
-		if strings.Contains(cause.Description, "failing to start") {
-			actions = append(actions, RecommendedAction{
-				Description: "Check application configuration and logs",
-				Priority:    "High",
-				Command:     "oc logs <pod_name>",
-				Risk:        "Low",
-			})
-		}
-	}
-
-	return actions
-}
-
-// calculateConfidence calculates overall confidence score
-func (e *Engine) calculateConfidence(rootCauses []RootCause, evidence []Evidence) float64 {
-	if len(rootCauses) == 0 {
-		return 0.3
-	}
-
-	var totalConfidence float64
-	for _, cause := range rootCauses {
-		totalConfidence += cause.Confidence
-	}
-
-	confidence := totalConfidence / float64(len(rootCauses))
-	
-	// Boost confidence based on evidence quality
-	if len(evidence) >= 3 {
-		confidence += 0.1
-	}
-
-	if confidence > 1.0 {
-		confidence = 1.0
-	}
-
-	return confidence
-}
-
-// calculateSeverity calculates severity level
-func (e *Engine) calculateSeverity(rootCauses []RootCause, evidence []Evidence) string {
-	if len(rootCauses) == 0 {
-		return "Low"
-	}
-
-	// Check for critical issues
-	for _, ev := range evidence {
-		if strings.Contains(ev.Content, "CrashLoopBackOff") ||
-			strings.Contains(ev.Content, "ImagePullBackOff") {
-			return "High"
-		}
-	}
-
-	// Check for medium issues
-	if len(rootCauses) >= 2 {
-		return "Medium"
-	}
-
-	return "Medium"
-}
-
-// formatDiagnosticResponse formats the diagnostic response
-func (e *Engine) formatDiagnosticResponse(analysis *Analysis) string {
-	var response strings.Builder
-
-	response.WriteString(fmt.Sprintf("🔍 **Diagnostic Analysis**\n\n"))
-	response.WriteString(fmt.Sprintf("🔴 **Severity:** %s\n", analysis.Severity))
-	response.WriteString(fmt.Sprintf("📊 **Confidence:** %.0f%%\n\n", analysis.Confidence*100))
-
-	if len(analysis.RootCauses) > 0 {
-		response.WriteString("## Root Causes Identified:\n")
-		for i, cause := range analysis.RootCauses {
-			response.WriteString(fmt.Sprintf("%d. %s (Confidence: %.0f%%)\n", 
-				i+1, cause.Description, cause.Confidence*100))
-		}
-		response.WriteString("\n")
-	}
-
-	if len(analysis.Evidence) > 0 {
-		response.WriteString("## Evidence Found:\n")
-		for _, ev := range analysis.Evidence {
-			response.WriteString(fmt.Sprintf("• **%s:** %s\n", ev.Type, ev.Content))
-		}
-		response.WriteString("\n")
-	}
-
-	if len(analysis.Actions) > 0 {
-		response.WriteString("## Recommended Solutions:\n")
-		for i, action := range analysis.Actions {
-			response.WriteString(fmt.Sprintf("### %s Priority Action %d:\n", 
-				strings.ToUpper(action.Priority), i+1))
-			response.WriteString(fmt.Sprintf("%s\n", action.Description))
-			if action.Command != "" {
-				response.WriteString(fmt.Sprintf("```\n%s\n```\n", action.Command))
+		// Add command info if available
+		if i < len(result.Commands) {
+			cmd := result.Commands[i]
+			if cmd.Error != "" {
+				lines = append(lines, fmt.Sprintf("   🔧 Command: %s (failed: %s)", cmd.Command, cmd.Error))
+			} else {
+				lines = append(lines, fmt.Sprintf("   🔧 Command: %s (success)", cmd.Command))
 			}
 		}
-		response.WriteString("\n")
+		lines = append(lines, "")
 	}
 
-	response.WriteString("## What would you like to do?\n")
-	response.WriteString("- **Accept Analysis** ✅ → Get implementation guidance\n")
-	response.WriteString("- **Get Alternative Analysis** 🤖 → AI-powered different perspective\n")
-	response.WriteString("- **Get More Details** 📊 → Extended diagnostic information\n")
+	// Add overall assessment
+	if result.IsInstalled {
+		lines = append(lines, "🎯 CONCLUSION: Operator is INSTALLED and functional")
+	} else {
+		lines = append(lines, "❌ CONCLUSION: Operator is NOT INSTALLED")
+		lines = append(lines, "💡 TIP: To install, visit OperatorHub in OpenShift Console or use 'oc' commands")
+	}
 
-	return response.String()
+	return strings.Join(lines, "\n")
+}
+
+// formatCommandResponse formats the command execution result for display (supports multiple commands)
+func (e *Engine) formatCommandResponse(result *command.GenerationResult) string {
+	var lines []string
+
+	// Handle multiple commands
+	if len(result.GeneratedCommands) > 1 {
+		lines = append(lines, fmt.Sprintf("🔧 Executed %d Commands:", len(result.GeneratedCommands)))
+		lines = append(lines, "")
+
+		successCount := 0
+		for i, cmd := range result.GeneratedCommands {
+			execResult := result.ExecutionResults[i]
+
+			lines = append(lines, fmt.Sprintf("Command %d: %s", i+1, cmd))
+
+			if execResult.ExitCode == 0 {
+				lines = append(lines, "  ✅ Status: SUCCESS")
+				successCount++
+				if execResult.Output != "" {
+					lines = append(lines, fmt.Sprintf("  📋 Output: %s", execResult.Output))
+				}
+			} else {
+				lines = append(lines, fmt.Sprintf("  ❌ Status: FAILED (exit code: %d)", execResult.ExitCode))
+				if execResult.Error != "" {
+					lines = append(lines, fmt.Sprintf("  🚨 Error: %s", execResult.Error))
+				}
+				if execResult.Output != "" {
+					lines = append(lines, fmt.Sprintf("  📋 Output: %s", execResult.Output))
+				}
+			}
+			lines = append(lines, "")
+		}
+
+		// Summary
+		if successCount == len(result.GeneratedCommands) {
+			lines = append(lines, "✅ All commands executed successfully!")
+		} else {
+			lines = append(lines, fmt.Sprintf("⚠️  %d of %d commands succeeded", successCount, len(result.GeneratedCommands)))
+		}
+	} else {
+		// Single command (backward compatibility)
+		lines = append(lines, fmt.Sprintf("🔧 Executed Command: %s", result.GeneratedCommand))
+
+		if result.ExecutionResult.ExitCode == 0 {
+			lines = append(lines, "✅ Status: SUCCESS")
+			lines = append(lines, "")
+			lines = append(lines, "📋 Output:")
+			lines = append(lines, strings.Repeat("-", 40))
+			if result.ExecutionResult.Output != "" {
+				lines = append(lines, result.ExecutionResult.Output)
+			} else {
+				lines = append(lines, "(No output)")
+			}
+		} else {
+			lines = append(lines, fmt.Sprintf("❌ Status: FAILED (exit code: %d)", result.ExecutionResult.ExitCode))
+			if result.ExecutionResult.Error != "" {
+				lines = append(lines, fmt.Sprintf("🚨 Error: %s", result.ExecutionResult.Error))
+			}
+
+			// Show fallback if used
+			if result.Fallback != nil {
+				lines = append(lines, "")
+				lines = append(lines, fmt.Sprintf("🔄 Fallback Command: %s", result.Fallback.Command))
+				if result.Fallback.ExitCode == 0 {
+					lines = append(lines, "✅ Fallback Status: SUCCESS")
+					lines = append(lines, "")
+					lines = append(lines, "📋 Fallback Output:")
+					lines = append(lines, strings.Repeat("-", 40))
+					if result.Fallback.Output != "" {
+						lines = append(lines, result.Fallback.Output)
+					} else {
+						lines = append(lines, "(No output)")
+					}
+				} else {
+					lines = append(lines, fmt.Sprintf("❌ Fallback Status: FAILED (exit code: %d)", result.Fallback.ExitCode))
+				}
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// formatNetworkResponse formats the network troubleshooting result for display
+func (e *Engine) formatNetworkResponse(result *network.TroubleshootingResult) string {
+	return result.Summary
 }
 
 // generateAnalysisID generates a unique analysis ID
 func generateAnalysisID() string {
-	return fmt.Sprintf("analysis_%d", time.Now().UnixNano())
+	return fmt.Sprintf("analysis-%d", time.Now().UnixNano())
 }

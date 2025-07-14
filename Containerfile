@@ -1,8 +1,8 @@
 # Containerfile for Podman/Buildah
 # This is optimized for Red Hat UBI and OpenShift environments
 
-# Build stage using Red Hat UBI Go toolset
-FROM registry.access.redhat.com/ubi9/go-toolset:1.21 AS builder
+# Build stage using Red Hat UBI Go toolset with latest available version
+FROM registry.access.redhat.com/ubi9/go-toolset:latest AS builder
 
 # Switch to root to install dependencies
 USER 0
@@ -16,8 +16,15 @@ COPY go.mod go.sum ./
 # Download dependencies
 RUN go mod download && go mod verify
 
-# Copy source code
+# Copy source code (exclude test files and temporary files)
 COPY --chown=1001:0 . .
+
+# Clean up any temporary files that might cause issues
+RUN find . -name "*.go.bak" -delete && \
+    find . -name "test_*" -type f -name "*.go" -delete && \
+    find . -name "debug_*" -type f -name "*.go" -delete && \
+    find . -name "verify_*" -type f -name "*.go" -delete && \
+    rm -f test_*.go debug_*.go verify_*.go || true
 
 # Build arguments for version information
 ARG VERSION=dev
@@ -26,7 +33,15 @@ ARG DATE=unknown
 ARG BUILD_USER=podman
 
 # Build the application with optimization flags
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN echo "Starting Go build process..." && \
+    go version && \
+    echo "Go environment:" && \
+    go env && \
+    echo "Checking dependencies..." && \
+    go mod tidy && \
+    go mod verify && \
+    echo "Building application..." && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v \
     -a -installsuffix cgo \
     -ldflags="-w -s -extldflags '-static' \
              -X main.version=${VERSION} \
