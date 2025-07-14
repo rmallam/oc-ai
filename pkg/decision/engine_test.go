@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/rakeshkumarmallam/openshift-mcp-go/internal/config"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/models"
 )
 
 func TestEngine_isDiagnosticQuery(t *testing.T) {
@@ -56,7 +57,7 @@ func TestEngine_extractResourceInfo(t *testing.T) {
 		result := engine.extractResourceInfo(test.prompt)
 		for key, expectedValue := range test.expected {
 			if result[key] != expectedValue {
-				t.Errorf("extractResourceInfo(%q)[%s] = %v, expected %v", 
+				t.Errorf("extractResourceInfo(%q)[%s] = %v, expected %v",
 					test.prompt, key, result[key], expectedValue)
 			}
 		}
@@ -67,12 +68,12 @@ func TestEngine_calculateConfidence(t *testing.T) {
 	cfg := &config.Config{}
 	engine := &Engine{config: cfg}
 
-	rootCauses := []RootCause{
+	rootCauses := []models.RootCause{
 		{Description: "Test cause 1", Confidence: 0.8},
 		{Description: "Test cause 2", Confidence: 0.9},
 	}
 
-	evidence := []Evidence{
+	evidence := []models.Evidence{
 		{Type: "logs", Content: "Error message"},
 		{Type: "status", Content: "Pod status"},
 		{Type: "events", Content: "Event data"},
@@ -80,7 +81,7 @@ func TestEngine_calculateConfidence(t *testing.T) {
 
 	confidence := engine.calculateConfidence(rootCauses, evidence)
 	expectedMin := 0.8 // Should be at least the average of root cause confidences
-	
+
 	if confidence < expectedMin {
 		t.Errorf("calculateConfidence() = %v, expected >= %v", confidence, expectedMin)
 	}
@@ -95,23 +96,23 @@ func TestEngine_calculateSeverity(t *testing.T) {
 	engine := &Engine{config: cfg}
 
 	tests := []struct {
-		evidence []Evidence
+		evidence []models.Evidence
 		expected string
 	}{
 		{
-			[]Evidence{
+			[]models.Evidence{
 				{Content: "Pod is in CrashLoopBackOff state"},
 			},
 			"High",
 		},
 		{
-			[]Evidence{
+			[]models.Evidence{
 				{Content: "ImagePullBackOff error"},
 			},
 			"High",
 		},
 		{
-			[]Evidence{
+			[]models.Evidence{
 				{Content: "Normal pod operation"},
 			},
 			"Medium",
@@ -119,7 +120,7 @@ func TestEngine_calculateSeverity(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		rootCauses := []RootCause{{Description: "Test cause"}}
+		rootCauses := []models.RootCause{{Description: "Test cause"}}
 		result := engine.calculateSeverity(rootCauses, test.evidence)
 		if result != test.expected {
 			t.Errorf("calculateSeverity() = %v, expected %v", result, test.expected)

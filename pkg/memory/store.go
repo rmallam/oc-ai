@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/rakeshkumarmallam/openshift-mcp-go/internal/config"
-	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/decision"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/models"
 	"github.com/sirupsen/logrus"
 	bolt "go.etcd.io/bbolt"
 )
@@ -29,11 +29,11 @@ type QueryRecord struct {
 
 // ResponseRecord represents a stored response
 type ResponseRecord struct {
-	ID         string             `json:"id"`
-	QueryID    string             `json:"query_id"`
-	Response   string             `json:"response"`
-	Analysis   *decision.Analysis `json:"analysis,omitempty"`
-	Timestamp  time.Time          `json:"timestamp"`
+	ID         string           `json:"id"`
+	QueryID    string           `json:"query_id"`
+	Response   string           `json:"response"`
+	Analysis   *models.Analysis `json:"analysis,omitempty"`
+	Timestamp  time.Time        `json:"timestamp"`
 }
 
 // FeedbackRecord represents user feedback
@@ -106,7 +106,7 @@ func (s *Store) StoreQuery(query string) error {
 }
 
 // StoreResponse stores a response with analysis
-func (s *Store) StoreResponse(query string, analysis *decision.Analysis) error {
+func (s *Store) StoreResponse(query string, analysis *models.Analysis) error {
 	// Find the query ID (simplified - in production you'd want better query matching)
 	queryID := generateID() // This should be the actual query ID
 
@@ -200,6 +200,33 @@ func (s *Store) GetResponsesByQuery(queryID string) ([]ResponseRecord, error) {
 	return responses, err
 }
 
+// GetAnalysisByQuery retrieves an analysis for a specific query
+func (s *Store) GetAnalysisByQuery(query string) (*models.Analysis, error) {
+	var analysis *models.Analysis
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("responses"))
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			var record ResponseRecord
+			if err := json.Unmarshal(v, &record); err != nil {
+				continue
+			}
+			if record.Analysis != nil && record.Analysis.Query == query {
+				analysis = record.Analysis
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if analysis == nil {
+		return nil, fmt.Errorf("analysis not found for query: %s", query)
+	}
+	return analysis, nil
+}
+
 // GetFeedbackStats retrieves feedback statistics
 func (s *Store) GetFeedbackStats() (map[string]int, error) {
 	stats := make(map[string]int)
@@ -226,6 +253,11 @@ func (s *Store) GetFeedbackStats() (map[string]int, error) {
 // Close closes the database connection
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// DB returns the underlying bolt.DB instance
+func (s *Store) DB() *bolt.DB {
+	return s.db
 }
 
 // generateID generates a simple ID based on timestamp

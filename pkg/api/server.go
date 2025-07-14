@@ -8,8 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/internal/config"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/decision"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/feedback"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/llm"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/memory"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/models"
 	"github.com/sirupsen/logrus"
 )
 
@@ -19,6 +21,7 @@ type Server struct {
 	engine         *gin.Engine
 	decisionEngine *decision.Engine
 	memory         *memory.Store
+	feedback       *feedback.Store
 	llmClient      llm.Client
 }
 
@@ -29,9 +32,9 @@ type ChatRequest struct {
 
 // ChatResponse represents a chat API response
 type ChatResponse struct {
-	Response  string                 `json:"response"`
-	Analysis  *decision.Analysis     `json:"analysis,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
+	Response  string           `json:"response"`
+	Analysis  *models.Analysis `json:"analysis,omitempty"`
+	Timestamp time.Time        `json:"timestamp"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -57,12 +60,17 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize memory store: %w", err)
 	}
 
+	feedbackStore, err := feedback.NewStore(memStore.DB())
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize feedback store: %w", err)
+	}
+
 	llmClient, err := llm.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LLM client: %w", err)
 	}
 
-	decisionEngine, err := decision.NewEngine(cfg, memStore, llmClient)
+	decisionEngine, err := decision.NewEngine(cfg, memStore, feedbackStore, llmClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize decision engine: %w", err)
 	}
@@ -80,6 +88,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		engine:         engine,
 		decisionEngine: decisionEngine,
 		memory:         memStore,
+		feedback:       feedbackStore,
 		llmClient:      llmClient,
 	}
 
@@ -192,6 +201,12 @@ func (s *Server) handleUserChoice(c *gin.Context) {
 	switch req.Choice {
 	case "accept":
 		response = "Great! I'll help you implement the recommended solution. Here are the step-by-step instructions..."
+		// Save the analysis to the feedback store
+		if analysis, err := s.memory.GetAnalysisByQuery(req.OriginalQuery); err == nil && analysis != nil {
+			if err := s.feedback.SaveFeedback(req.OriginalQuery, analysis); err != nil {
+				logrus.WithError(err).Warn("Failed to save feedback")
+			}
+		}
 	case "decline":
 		// Get alternative analysis from LLM
 		altResponse, err := s.llmClient.GetAlternativeAnalysis(req.OriginalQuery)

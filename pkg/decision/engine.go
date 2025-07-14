@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/rakeshkumarmallam/openshift-mcp-go/internal/config"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/feedback"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/llm"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/memory"
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/models"
 	"github.com/sirupsen/logrus"
 )
 
@@ -16,60 +18,33 @@ import (
 type Engine struct {
 	config    *config.Config
 	memory    *memory.Store
+	feedback  *feedback.Store
 	llmClient llm.Client
 }
 
-// Analysis represents the result of analysis
-type Analysis struct {
-	Query       string                 `json:"query"`
-	Response    string                 `json:"response"`
-	Confidence  float64                `json:"confidence"`
-	Severity    string                 `json:"severity"`
-	RootCauses  []RootCause            `json:"root_causes"`
-	Actions     []RecommendedAction    `json:"recommended_actions"`
-	Evidence    []Evidence             `json:"evidence"`
-	Timestamp   time.Time              `json:"timestamp"`
-	AnalysisID  string                 `json:"analysis_id"`
-	Metadata    map[string]interface{} `json:"metadata"`
-}
-
-// RootCause represents an identified root cause
-type RootCause struct {
-	Description string  `json:"description"`
-	Confidence  float64 `json:"confidence"`
-	Evidence    string  `json:"evidence"`
-}
-
-// RecommendedAction represents a recommended action
-type RecommendedAction struct {
-	Description string `json:"description"`
-	Priority    string `json:"priority"` // High, Medium, Low
-	Command     string `json:"command,omitempty"`
-	Risk        string `json:"risk,omitempty"`
-}
-
-// Evidence represents evidence collected during analysis
-type Evidence struct {
-	Type        string `json:"type"`        // logs, events, status, etc.
-	Source      string `json:"source"`      // pod name, node name, etc.
-	Content     string `json:"content"`     // actual evidence content
-	Timestamp   time.Time `json:"timestamp"`
-}
+// No structs here. They are in pkg/models/analysis.go
 
 // NewEngine creates a new decision engine
-func NewEngine(cfg *config.Config, mem *memory.Store, llmClient llm.Client) (*Engine, error) {
+func NewEngine(cfg *config.Config, mem *memory.Store, feedback *feedback.Store, llmClient llm.Client) (*Engine, error) {
 	return &Engine{
 		config:    cfg,
 		memory:    mem,
+		feedback:  feedback,
 		llmClient: llmClient,
 	}, nil
 }
 
 // Analyze analyzes a user prompt and returns analysis
-func (e *Engine) Analyze(prompt string) (*Analysis, error) {
+func (e *Engine) Analyze(prompt string) (*models.Analysis, error) {
 	logrus.WithField("prompt", prompt).Debug("Starting analysis")
 
-	analysis := &Analysis{
+	// Check for feedback first
+	if feedbackAnalysis, err := e.feedback.GetFeedback(prompt); err == nil && feedbackAnalysis != nil {
+		logrus.WithField("prompt", prompt).Info("Returning analysis from feedback")
+		return feedbackAnalysis, nil
+	}
+
+	analysis := &models.Analysis{
 		Query:      prompt,
 		Timestamp:  time.Now(),
 		AnalysisID: generateAnalysisID(),
@@ -103,7 +78,7 @@ func (e *Engine) isDiagnosticQuery(prompt string) bool {
 }
 
 // performDiagnosticAnalysis performs diagnostic analysis
-func (e *Engine) performDiagnosticAnalysis(analysis *Analysis) (*Analysis, error) {
+func (e *Engine) performDiagnosticAnalysis(analysis *models.Analysis) (*models.Analysis, error) {
 	logrus.Debug("Performing diagnostic analysis")
 
 	// Extract resource information from prompt
@@ -136,7 +111,7 @@ func (e *Engine) performDiagnosticAnalysis(analysis *Analysis) (*Analysis, error
 }
 
 // performRegularAnalysis performs regular non-diagnostic analysis
-func (e *Engine) performRegularAnalysis(analysis *Analysis) (*Analysis, error) {
+func (e *Engine) performRegularAnalysis(analysis *models.Analysis) (*models.Analysis, error) {
 	logrus.Debug("Performing regular analysis")
 
 	// Use LLM for regular queries
@@ -178,27 +153,27 @@ func (e *Engine) extractResourceInfo(prompt string) map[string]string {
 }
 
 // collectEvidence collects evidence for analysis
-func (e *Engine) collectEvidence(resourceInfo map[string]string) ([]Evidence, error) {
-	var evidence []Evidence
+func (e *Engine) collectEvidence(resourceInfo map[string]string) ([]models.Evidence, error) {
+	var evidence []models.Evidence
 
 	// This would normally collect actual evidence from Kubernetes
 	// For now, we'll simulate evidence collection
 	if podName, exists := resourceInfo["pod_name"]; exists {
-		evidence = append(evidence, Evidence{
+		evidence = append(evidence, models.Evidence{
 			Type:      "pod_status",
 			Source:    podName,
 			Content:   "Pod is in CrashLoopBackOff state",
 			Timestamp: time.Now(),
 		})
 
-		evidence = append(evidence, Evidence{
+		evidence = append(evidence, models.Evidence{
 			Type:      "logs",
 			Source:    podName,
 			Content:   "Error: No module named 'uvicorn'",
 			Timestamp: time.Now(),
 		})
 
-		evidence = append(evidence, Evidence{
+		evidence = append(evidence, models.Evidence{
 			Type:      "events",
 			Source:    podName,
 			Content:   "Container image 'my-app:latest' is present on machine",
@@ -210,13 +185,13 @@ func (e *Engine) collectEvidence(resourceInfo map[string]string) ([]Evidence, er
 }
 
 // analyzeRootCauses analyzes evidence to identify root causes
-func (e *Engine) analyzeRootCauses(evidence []Evidence) []RootCause {
-	var rootCauses []RootCause
+func (e *Engine) analyzeRootCauses(evidence []models.Evidence) []models.RootCause {
+	var rootCauses []models.RootCause
 
 	// Analyze evidence patterns
 	for _, ev := range evidence {
 		if strings.Contains(ev.Content, "No module named") {
-			rootCauses = append(rootCauses, RootCause{
+			rootCauses = append(rootCauses, models.RootCause{
 				Description: "Missing Python module dependency",
 				Confidence:  0.9,
 				Evidence:    ev.Content,
@@ -224,7 +199,7 @@ func (e *Engine) analyzeRootCauses(evidence []Evidence) []RootCause {
 		}
 
 		if strings.Contains(ev.Content, "CrashLoopBackOff") {
-			rootCauses = append(rootCauses, RootCause{
+			rootCauses = append(rootCauses, models.RootCause{
 				Description: "Application failing to start properly",
 				Confidence:  0.8,
 				Evidence:    ev.Content,
@@ -236,12 +211,12 @@ func (e *Engine) analyzeRootCauses(evidence []Evidence) []RootCause {
 }
 
 // generateRecommendations generates recommended actions
-func (e *Engine) generateRecommendations(rootCauses []RootCause, evidence []Evidence) []RecommendedAction {
-	var actions []RecommendedAction
+func (e *Engine) generateRecommendations(rootCauses []models.RootCause, evidence []models.Evidence) []models.RecommendedAction {
+	var actions []models.RecommendedAction
 
 	for _, cause := range rootCauses {
 		if strings.Contains(cause.Description, "Missing Python module") {
-			actions = append(actions, RecommendedAction{
+			actions = append(actions, models.RecommendedAction{
 				Description: "Install missing Python dependencies",
 				Priority:    "High",
 				Command:     "pip install <missing_module>",
@@ -250,7 +225,7 @@ func (e *Engine) generateRecommendations(rootCauses []RootCause, evidence []Evid
 		}
 
 		if strings.Contains(cause.Description, "failing to start") {
-			actions = append(actions, RecommendedAction{
+			actions = append(actions, models.RecommendedAction{
 				Description: "Check application configuration and logs",
 				Priority:    "High",
 				Command:     "oc logs <pod_name>",
@@ -263,7 +238,7 @@ func (e *Engine) generateRecommendations(rootCauses []RootCause, evidence []Evid
 }
 
 // calculateConfidence calculates overall confidence score
-func (e *Engine) calculateConfidence(rootCauses []RootCause, evidence []Evidence) float64 {
+func (e *Engine) calculateConfidence(rootCauses []models.RootCause, evidence []models.Evidence) float64 {
 	if len(rootCauses) == 0 {
 		return 0.3
 	}
@@ -288,7 +263,7 @@ func (e *Engine) calculateConfidence(rootCauses []RootCause, evidence []Evidence
 }
 
 // calculateSeverity calculates severity level
-func (e *Engine) calculateSeverity(rootCauses []RootCause, evidence []Evidence) string {
+func (e *Engine) calculateSeverity(rootCauses []models.RootCause, evidence []models.Evidence) string {
 	if len(rootCauses) == 0 {
 		return "Low"
 	}
@@ -310,7 +285,7 @@ func (e *Engine) calculateSeverity(rootCauses []RootCause, evidence []Evidence) 
 }
 
 // formatDiagnosticResponse formats the diagnostic response
-func (e *Engine) formatDiagnosticResponse(analysis *Analysis) string {
+func (e *Engine) formatDiagnosticResponse(analysis *models.Analysis) string {
 	var response strings.Builder
 
 	response.WriteString(fmt.Sprintf("🔍 **Diagnostic Analysis**\n\n"))

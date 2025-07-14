@@ -17,7 +17,10 @@ COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
 # Copy source code
-COPY --chown=1001:0 . .
+COPY --chown=1001:0 cmd ./cmd
+COPY --chown=1001:0 internal ./internal
+COPY --chown=1001:0 pkg ./pkg
+COPY --chown=1001:0 web ./web
 
 # Build arguments for version information
 ARG VERSION=dev
