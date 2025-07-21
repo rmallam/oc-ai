@@ -2,8 +2,10 @@
 
 # Build variables
 BINARY_NAME=openshift-mcp
+CLI_BINARY_NAME=oc-ai
 BUILD_DIR=bin
 CMD_DIR=cmd/openshift-mcp
+CLI_CMD_DIR=cmd/oc-ai
 MAIN_FILE=main.go
 
 # Version information
@@ -25,14 +27,25 @@ GOFMT=$(GOCMD) fmt
 
 # Default target
 .PHONY: all
-all: clean deps test build
+all: clean deps test build build-cli
 
-# Build the application
+# Build the MCP server
 .PHONY: build
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./$(CMD_DIR)
+
+# Build the CLI client
+.PHONY: build-cli
+build-cli:
+	@echo "Building $(CLI_BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(CLI_BINARY_NAME) ./$(CLI_CMD_DIR)
+
+# Build both server and CLI
+.PHONY: build-both
+build-both: build build-cli
 
 # Build for multiple platforms
 .PHONY: build-all
@@ -43,6 +56,7 @@ build-linux:
 	@echo "Building for Linux..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
+	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(CLI_BINARY_NAME)-linux-amd64 ./$(CLI_CMD_DIR)
 
 .PHONY: build-darwin
 build-darwin:
@@ -50,12 +64,15 @@ build-darwin:
 	@mkdir -p $(BUILD_DIR)
 	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./$(CMD_DIR)
 	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./$(CMD_DIR)
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(CLI_BINARY_NAME)-darwin-amd64 ./$(CLI_CMD_DIR)
+	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(CLI_BINARY_NAME)-darwin-arm64 ./$(CLI_CMD_DIR)
 
 .PHONY: build-windows
 build-windows:
 	@echo "Building for Windows..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./$(CMD_DIR)
+	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(CLI_BINARY_NAME)-windows-amd64.exe ./$(CLI_CMD_DIR)
 
 # Download dependencies
 .PHONY: deps

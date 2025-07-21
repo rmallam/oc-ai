@@ -1,14 +1,20 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/internal/config"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/decision"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/llm"
+	mcpserver "github.com/rakeshkumarmallam/openshift-mcp-go/pkg/mcp"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/memory"
 	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/types"
 	"github.com/sirupsen/logrus"
@@ -21,6 +27,8 @@ type Server struct {
 	decisionEngine *decision.Engine
 	memory         *memory.Store
 	llmClient      llm.Client
+	mcpServer      *mcpserver.Server
+	enhancedChat   *EnhancedChatHandler
 }
 
 // ChatRequest represents a chat API request
@@ -84,6 +92,18 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		llmClient:      llmClient,
 	}
 
+	// Initialize MCP server if enabled
+	if cfg.MCP.Enabled {
+		if err := server.initializeMCP(); err != nil {
+			logrus.WithError(err).Warn("Failed to initialize MCP server, continuing without MCP support")
+		}
+	}
+
+	// Initialize enhanced chat handler
+	if server.mcpServer != nil {
+		server.enhancedChat = NewEnhancedChatHandler(server.mcpServer, server.config)
+	}
+
 	server.setupRoutes()
 	return server, nil
 }
@@ -93,20 +113,49 @@ func (s *Server) setupRoutes() {
 	// Health check
 	s.engine.GET("/health", s.handleHealth)
 
+	// Direct chat endpoint for convenience
+	if s.enhancedChat != nil {
+		s.engine.POST("/chat", s.handleEnhancedChatDirect)
+	}
+
 	// API routes
 	api := s.engine.Group("/api/v1")
 	{
-		api.POST("/chat", s.handleChat)
+		// Use enhanced chat if available, otherwise fall back to basic chat
+		if s.enhancedChat != nil {
+			api.POST("/chat", s.handleEnhancedChatDirect)
+		} else {
+			api.POST("/chat", s.handleChat)
+		}
+
 		api.POST("/user-choice", s.handleUserChoice)
 		api.GET("/prompts/stats", s.handlePromptStats)
 		api.POST("/prompts/update", s.handleUpdatePrompts)
 		api.GET("/prompts/categories", s.handlePromptCategories)
 	}
 
-	// Static routes for web UI (if needed)
-	s.engine.Static("/static", "./web/static")
-	s.engine.LoadHTMLGlob("web/templates/*")
-	s.engine.GET("/", s.handleIndex)
+	// Enhanced chat routes (with LLM intelligence)
+	if s.enhancedChat != nil {
+		// Register enhanced chat routes (for /api/v1/chat/enhanced endpoint)
+		s.enhancedChat.RegisterRoutes(s.engine)
+	}
+
+	// Static routes for web UI (if templates exist)
+	templatesPath := "web/templates"
+	if _, err := os.Stat(templatesPath); err == nil {
+		// Templates directory exists, check if there are any template files
+		templateFiles, err := filepath.Glob("web/templates/*")
+		if err == nil && len(templateFiles) > 0 {
+			s.engine.Static("/static", "./web/static")
+			s.engine.LoadHTMLGlob("web/templates/*")
+			s.engine.GET("/", s.handleIndex)
+			logrus.Info("Web UI templates loaded successfully")
+		} else {
+			logrus.Warn("No template files found in web/templates/, web UI disabled")
+		}
+	} else {
+		logrus.Warn("Web templates directory not found, web UI disabled")
+	}
 }
 
 // Run starts the server
@@ -131,7 +180,7 @@ func (s *Server) handleIndex(c *gin.Context) {
 	})
 }
 
-// handleChat handles chat requests
+// handleChat handles chat requests with live execution
 func (s *Server) handleChat(c *gin.Context) {
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -139,39 +188,220 @@ func (s *Server) handleChat(c *gin.Context) {
 		return
 	}
 
-	logrus.WithField("prompt", req.Prompt).Debug("Processing chat request")
+	logrus.WithField("prompt", req.Prompt).Debug("Processing chat request with live execution")
 
-	// Store the query in memory
-	if err := s.memory.StoreQuery(req.Prompt); err != nil {
-		logrus.WithError(err).Warn("Failed to store query")
+	// If MCP server is not available, return error
+	if s.mcpServer == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "MCP server not available"})
+		return
 	}
 
-	// Process the request through decision engine
-	analysis, err := s.decisionEngine.Analyze(req.Prompt)
+	// Execute live command directly through MCP
+	result, err := s.executeLiveCommand(req.Prompt)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to analyze prompt")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Analysis failed"})
+		logrus.WithError(err).Error("Failed to execute live command")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Live execution failed: " + err.Error()})
 		return
 	}
 
 	response := ChatResponse{
-		Response:  analysis.Response,
-		Analysis:  analysis,
+		Response:  result,
 		Timestamp: time.Now(),
 		Metadata: map[string]interface{}{
-			"model":      s.config.Model,
-			"provider":   s.config.LLMProvider,
-			"confidence": analysis.Confidence,
-			"severity":   analysis.Severity,
+			"execution_type": "live",
+			"mcp_enabled":    true,
 		},
 	}
 
-	// Store the response
-	if err := s.memory.StoreResponse(req.Prompt, analysis); err != nil {
-		logrus.WithError(err).Warn("Failed to store response")
+	c.JSON(http.StatusOK, response)
+}
+
+// handleEnhancedChatDirect handles chat requests with LLM intelligence
+func (s *Server) handleEnhancedChatDirect(c *gin.Context) {
+	var req ChatRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	c.JSON(http.StatusOK, response)
+	logrus.WithField("prompt", req.Prompt).Debug("Processing enhanced chat request with LLM intelligence")
+
+	// If enhanced chat handler is not available, fall back to regular chat
+	if s.enhancedChat == nil {
+		s.handleChat(c)
+		return
+	}
+
+	// Convert to enhanced chat request
+	enhancedReq := EnhancedChatRequest{
+		Prompt:   req.Prompt,
+		MaxSteps: 10,
+		Profile:  "sre",
+	}
+
+	// Execute with enhanced chat handler
+	response, err := s.enhancedChat.executeIterativeQuery(c.Request.Context(), enhancedReq)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to execute enhanced chat request")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Enhanced chat execution failed: " + err.Error()})
+		return
+	}
+
+	// Convert enhanced response to regular response format for compatibility
+	chatResponse := ChatResponse{
+		Response:  response.Response,
+		Timestamp: response.Timestamp,
+		Metadata:  response.Metadata,
+	}
+
+	c.JSON(http.StatusOK, chatResponse)
+}
+
+// executeLiveCommand executes a command directly through MCP tools
+func (s *Server) executeLiveCommand(prompt string) (string, error) {
+	// Simple command mapping based on keywords
+	prompt = strings.ToLower(prompt)
+
+	// Determine which MCP tool to use based on the prompt
+	if strings.Contains(prompt, "pods") || strings.Contains(prompt, "pod") {
+		return s.executeMCPTool("list_pods", map[string]interface{}{
+			"namespace": s.extractNamespace(prompt),
+		})
+	}
+
+	if strings.Contains(prompt, "namespaces") || strings.Contains(prompt, "namespace") {
+		return s.executeMCPTool("list_namespaces", map[string]interface{}{})
+	}
+
+	if strings.Contains(prompt, "events") || strings.Contains(prompt, "event") {
+		return s.executeMCPTool("get_events", map[string]interface{}{
+			"namespace": s.extractNamespace(prompt),
+		})
+	}
+
+	if strings.Contains(prompt, "resources") || strings.Contains(prompt, "resource") {
+		return s.executeMCPTool("get_resource", map[string]interface{}{
+			"resource_type": s.extractResourceType(prompt),
+			"resource_name": s.extractResourceName(prompt),
+			"namespace":     s.extractNamespace(prompt),
+		})
+	}
+
+	if strings.Contains(prompt, "helm") {
+		return s.executeMCPTool("helm_list", map[string]interface{}{
+			"namespace": s.extractNamespace(prompt),
+		})
+	}
+
+	if strings.Contains(prompt, "diagnose") || strings.Contains(prompt, "debug") {
+		return s.executeMCPTool("openshift_diagnose", map[string]interface{}{
+			"resource_type": s.extractResourceType(prompt),
+			"resource_name": s.extractResourceName(prompt),
+			"namespace":     s.extractNamespace(prompt),
+		})
+	}
+
+	// Default to listing pods if no specific command is detected
+	return s.executeMCPTool("list_pods", map[string]interface{}{
+		"namespace": "default",
+	})
+}
+
+// executeMCPTool executes a specific MCP tool using the handler
+func (s *Server) executeMCPTool(toolName string, arguments map[string]interface{}) (string, error) {
+	ctx := context.Background()
+
+	// Create MCP request structure
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      toolName,
+			Arguments: arguments,
+		},
+	}
+
+	// Use the MCP handler to execute the tool
+	handler := NewMCPHandler(s.mcpServer)
+	return handler.executeTool(ctx, request)
+}
+
+// extractNamespace extracts namespace from the prompt, defaults to "default"
+func (s *Server) extractNamespace(prompt string) string {
+	// Look for namespace patterns
+	if strings.Contains(prompt, "namespace") {
+		words := strings.Fields(prompt)
+		for i, word := range words {
+			if word == "namespace" && i+1 < len(words) {
+				return words[i+1]
+			}
+			// Also check for "word namespace" pattern
+			if i+1 < len(words) && words[i+1] == "namespace" {
+				return words[i]
+			}
+		}
+	}
+
+	// Look for "in the X" pattern
+	if strings.Contains(prompt, "in the") {
+		words := strings.Fields(prompt)
+		for i, word := range words {
+			if word == "the" && i+1 < len(words) {
+				next := words[i+1]
+				// Don't return common words
+				if next != "cluster" && next != "system" && next != "pod" && next != "pods" {
+					return next
+				}
+			}
+		}
+	}
+
+	// Look for common namespace names
+	if strings.Contains(prompt, "kube-system") {
+		return "kube-system"
+	}
+	if strings.Contains(prompt, "openshift") {
+		return "openshift"
+	}
+	if strings.Contains(prompt, "monitoring") {
+		return "openshift-monitoring"
+	}
+	if strings.Contains(prompt, "debugger") {
+		return "debugger"
+	}
+
+	return "default"
+}
+
+// extractResourceType extracts resource type from the prompt
+func (s *Server) extractResourceType(prompt string) string {
+	if strings.Contains(prompt, "pod") {
+		return "pod"
+	}
+	if strings.Contains(prompt, "deployment") {
+		return "deployment"
+	}
+	if strings.Contains(prompt, "service") {
+		return "service"
+	}
+	if strings.Contains(prompt, "configmap") {
+		return "configmap"
+	}
+	if strings.Contains(prompt, "secret") {
+		return "secret"
+	}
+	return "pod" // default
+}
+
+// extractResourceName extracts resource name from the prompt
+func (s *Server) extractResourceName(prompt string) string {
+	// This is a simple implementation - in a real scenario, you'd use NLP
+	// to extract the resource name more accurately
+	words := strings.Fields(prompt)
+	for i, word := range words {
+		if (word == "pod" || word == "deployment" || word == "service") && i+1 < len(words) {
+			return words[i+1]
+		}
+	}
+	return "" // empty name means list all
 }
 
 // handleUserChoice handles user choice requests
@@ -291,4 +521,28 @@ func (s *Server) handlePromptCategories(c *gin.Context) {
 		"count":      len(categories),
 		"timestamp":  time.Now(),
 	})
+}
+
+// initializeMCP sets up the MCP server integration
+func (s *Server) initializeMCP() error {
+	// Initialize MCP server with simple configuration
+	mcpConfig := &mcpserver.Config{
+		Profile: s.config.MCP.Profile,
+		Debug:   s.config.Debug,
+	}
+
+	s.mcpServer = mcpserver.NewServer(mcpConfig, s.config.Kubeconfig)
+	if s.mcpServer == nil {
+		return fmt.Errorf("failed to create MCP server")
+	}
+
+	// Add MCP routes
+	mcpHandler := NewMCPHandler(s.mcpServer)
+	mcpHandler.RegisterRoutes(s.engine)
+
+	// Initialize enhanced chat handler (routes will be registered in setupRoutes)
+	s.enhancedChat = NewEnhancedChatHandler(s.mcpServer, s.config)
+
+	logrus.Info("MCP server initialized successfully")
+	return nil
 }

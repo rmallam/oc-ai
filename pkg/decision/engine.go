@@ -33,9 +33,9 @@ func NewEngine(cfg *config.Config, mem *memory.Store, llmClient llm.Client) (*En
 		memory:         mem,
 		llmClient:      llmClient,
 		sreAssistant:   llm.NewSREAssistant(llmClient),
-		operatorEngine: operator.NewDetectionEngine(),
-		commandEngine:  command.NewGenerationEngine(llmClient),
-		networkEngine:  network.NewTroubleshootingEngine(),
+		operatorEngine: operator.NewDetectionEngineWithKubeconfig(cfg.Kubeconfig),
+		commandEngine:  command.NewGenerationEngineWithKubeconfig(llmClient, cfg.Kubeconfig),
+		networkEngine:  network.NewTroubleshootingEngineWithKubeconfig(cfg.Kubeconfig),
 	}, nil
 }
 

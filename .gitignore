@@ -29,6 +29,26 @@ dist/
 *.swo
 *~
 
+# Log files
+*.log
+server.log
+server_debug.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Built binaries
+oc-ai
+openshift-mcp
+server
+mcp-server
+
 # OS generated files
 .DS_Store
 .DS_Store?

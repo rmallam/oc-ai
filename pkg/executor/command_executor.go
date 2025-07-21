@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rakeshkumarmallam/openshift-mcp-go/pkg/kubeconfig"
 	"github.com/sirupsen/logrus"
 )
 
@@ -14,6 +15,7 @@ import (
 type CommandExecutor struct {
 	allowedCommands []string
 	timeout         time.Duration
+	kubeconfigPath  string
 }
 
 // ExecutionResult represents the result of command execution
@@ -35,6 +37,19 @@ func NewCommandExecutor() *CommandExecutor {
 			"cat", "grep", "awk", "sed", "head", "tail",
 		},
 		timeout: 10 * time.Second, // Reduced timeout for faster feedback
+	}
+}
+
+// NewCommandExecutorWithKubeconfig creates a new command executor with kubeconfig
+func NewCommandExecutorWithKubeconfig(kubeconfigPath string) *CommandExecutor {
+	return &CommandExecutor{
+		allowedCommands: []string{
+			"kubectl", "oc", "helm", "docker", "podman",
+			"curl", "ping", "nslookup", "dig", "telnet",
+			"cat", "grep", "awk", "sed", "head", "tail",
+		},
+		timeout:        10 * time.Second,
+		kubeconfigPath: kubeconfigPath,
 	}
 }
 
@@ -100,6 +115,9 @@ func (ce *CommandExecutor) Execute(command string) *ExecutionResult {
 		return result
 	}
 
+	// Prepare kubectl/oc commands with proper authentication
+	command = ce.prepareKubernetesCommand(command)
+
 	logrus.Debugf("Executing command: %s", command)
 
 	// Check if this is a shell command (contains pipes, redirects, etc.)
@@ -109,6 +127,51 @@ func (ce *CommandExecutor) Execute(command string) *ExecutionResult {
 
 	// Execute as regular command
 	return ce.executeRegularCommand(command, startTime)
+}
+
+// prepareKubernetesCommand sets up kubectl/oc commands with proper authentication
+func (ce *CommandExecutor) prepareKubernetesCommand(command string) string {
+	parts := strings.Fields(strings.TrimSpace(command))
+	if len(parts) == 0 {
+		return command
+	}
+
+	// Check if this is a kubectl or oc command
+	firstCommand := parts[0]
+	if firstCommand != "kubectl" && firstCommand != "oc" {
+		return command
+	}
+
+	// Check if we're running in cluster (service account available)
+	if kubeconfig.IsInCluster() {
+		// When running in cluster, kubectl/oc will automatically use service account token
+		// No additional flags needed
+		return command
+	}
+
+	// When running outside cluster, ensure kubeconfig is specified if we have one
+	if ce.kubeconfigPath != "" {
+		// Check if --kubeconfig is already specified
+		kubeconfigPresent := false
+		for _, part := range parts {
+			if strings.HasPrefix(part, "--kubeconfig") {
+				kubeconfigPresent = true
+				break
+			}
+		}
+
+		// Add kubeconfig flag if not present
+		if !kubeconfigPresent {
+			// Insert after the command name
+			newParts := []string{parts[0], "--kubeconfig", ce.kubeconfigPath}
+			if len(parts) > 1 {
+				newParts = append(newParts, parts[1:]...)
+			}
+			return strings.Join(newParts, " ")
+		}
+	}
+
+	return command
 }
 
 // isShellCommand detects if a command needs shell execution

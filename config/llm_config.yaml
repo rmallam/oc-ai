@@ -1,0 +1,70 @@
+# LLM Integration Configuration
+llm:
+  # Primary LLM service to use
+  provider: "gemini"  # Options: openai, gemini, ollama, claude
+  
+  # OpenAI Configuration
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-4"
+    temperature: 0.1
+    max_tokens: 1000
+    
+  # Google Gemini Configuration
+  gemini:
+    api_key: "${GEMINI_API_KEY}"
+    model: "gemini-1.5-flash"
+    temperature: 0.1
+    
+  # Ollama Configuration (for local LLMs)
+  ollama:
+    endpoint: "http://localhost:11434"
+    model: "llama3.1"
+    
+  # Anthropic Claude Configuration
+  claude:
+    api_key: "${ANTHROPIC_API_KEY}"
+    model: "claude-3-sonnet-20240229"
+    temperature: 0.1
+    max_tokens: 1000
+
+# Planning Configuration
+planning:
+  # Enable intelligent planning with LLM
+  enable_llm_planning: true
+  
+  # Fallback to static patterns if LLM fails
+  fallback_to_static: true
+  
+  # Cache planning results for similar queries
+  enable_caching: true
+  cache_ttl: "1h"
+  
+  # Planning prompt templates
+  templates:
+    base_prompt: |
+      You are an expert OpenShift/Kubernetes administrator. Analyze the following query and create a detailed execution plan.
+      
+      Available Tools:
+      {tools}
+      
+      Current Context:
+      {context}
+      
+      User Query: {query}
+      
+      Provide a JSON response with the following structure:
+      {
+        "description": "Brief description of what will be done",
+        "category": "Category of operation (troubleshooting, maintenance, exploration, etc.)",
+        "complexity": "Complexity level (low, medium, high)",
+        "steps": [
+          {
+            "action": "Action name",
+            "tool": "Tool to use",
+            "parameters": {"param": "value"},
+            "description": "What this step does",
+            "required": true/false
+          }
+        ]
+      }

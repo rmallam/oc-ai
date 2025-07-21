@@ -71,6 +71,13 @@ func NewTroubleshootingEngine() *TroubleshootingEngine {
 	}
 }
 
+// NewTroubleshootingEngineWithKubeconfig creates a new network troubleshooting engine with kubeconfig
+func NewTroubleshootingEngineWithKubeconfig(kubeconfigPath string) *TroubleshootingEngine {
+	return &TroubleshootingEngine{
+		executor: executor.NewCommandExecutorWithKubeconfig(kubeconfigPath),
+	}
+}
+
 // IsNetworkQuery detects if a query is related to network troubleshooting or pod diagnostics
 func (nt *TroubleshootingEngine) IsNetworkQuery(query string) bool {
 	// More specific network keywords to avoid false positives

@@ -35,6 +35,14 @@ func NewGenerationEngine(llmClient llm.Client) *GenerationEngine {
 	}
 }
 
+// NewGenerationEngineWithKubeconfig creates a new command generation engine with kubeconfig
+func NewGenerationEngineWithKubeconfig(llmClient llm.Client, kubeconfigPath string) *GenerationEngine {
+	return &GenerationEngine{
+		executor:  executor.NewCommandExecutorWithKubeconfig(kubeconfigPath),
+		llmClient: llmClient,
+	}
+}
+
 // GenerateAndExecute generates commands from query and executes them
 func (ge *GenerationEngine) GenerateAndExecute(query string) *GenerationResult {
 	logrus.Debugf("Generating commands for query: %s", query)

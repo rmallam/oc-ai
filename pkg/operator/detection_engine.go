@@ -38,6 +38,13 @@ func NewDetectionEngine() *DetectionEngine {
 	}
 }
 
+// NewDetectionEngineWithKubeconfig creates a new operator detection engine with kubeconfig
+func NewDetectionEngineWithKubeconfig(kubeconfigPath string) *DetectionEngine {
+	return &DetectionEngine{
+		executor: executor.NewCommandExecutorWithKubeconfig(kubeconfigPath),
+	}
+}
+
 // IsOperatorQuery detects if a query is asking about operator installation
 func (de *DetectionEngine) IsOperatorQuery(query string) (bool, string) {
 	lowerQuery := strings.ToLower(query)
